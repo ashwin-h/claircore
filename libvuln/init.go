@@ -14,6 +14,7 @@ import (
 	"github.com/quay/claircore/internal/updater"
 	"github.com/quay/claircore/internal/vulnstore"
 	"github.com/quay/claircore/internal/vulnstore/postgres"
+	"github.com/quay/claircore/libvuln/driver"
 	"github.com/quay/claircore/libvuln/migrations"
 	pglock "github.com/quay/claircore/pkg/distlock/postgres"
 )
@@ -27,6 +28,12 @@ func initUpdaters(ctx context.Context, opts *Opts, db *sqlx.DB, store vulnstore.
 		if _, ok := controllers[u.Name()]; ok {
 			eC <- fmt.Errorf("duplicate updater found in UpdaterFactory. all names must be unique: %s", u.Name())
 			return
+		}
+		if c, ok := u.(driver.Configurable); ok {
+			if err := c.Configure(ctx, opts.Configs[u.Name()], opts.client); err != nil {
+				eC <- err
+				return
+			}
 		}
 		controllers[u.Name()] = updater.NewController(&updater.Opts{
 			Updater:       u,

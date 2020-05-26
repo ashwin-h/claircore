@@ -3,6 +3,7 @@ package libvuln
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/quay/claircore/alpine"
@@ -59,6 +60,11 @@ type Opts struct {
 	//
 	// This list will me merged with the default matchers.
 	Matchers []driver.Matcher
+	// Configs is a map of functions for configuration of Updaters.
+	Configs map[string]driver.ConfigUnmarshaler
+
+	// Client is an http.Client for use by all updaters.
+	client *http.Client
 }
 
 // defaultMacheter is a variable containing
@@ -101,5 +107,8 @@ func (o *Opts) parse(ctx context.Context) error {
 	// merge determined updaters with any out-of-tree updaters
 	o.Updaters = append(o.Updaters, set.Updaters()...)
 
+	if o.client == nil {
+		o.client = http.DefaultClient
+	}
 	return nil
 }
