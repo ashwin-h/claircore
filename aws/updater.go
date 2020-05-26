@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,11 +22,23 @@ var _ driver.Updater = (*Updater)(nil)
 // interfaces making it eligible to be used as a claircore.Updater
 type Updater struct {
 	release Release
+	// Timeout is applied to each network call.
+	//
+	// The default is 15 seconds.
+	Timeout time.Duration `yaml:"timeout",json:"timeout"`
+	// Mirrors is a list of URLs to use instead of fetching a mirrorlist.
+	//
+	// The layout of resources at the provided URLs is expected to be the same
+	// as the upstream URLs.
+	Mirrors []string `yaml:"mirrors",json:"mirrors"`
+
+	client *Client
 }
 
 func NewUpdater(release Release) (*Updater, error) {
 	return &Updater{
 		release: release,
+		Timeout: defaultOpTimeout,
 	}, nil
 }
 
@@ -33,12 +47,18 @@ func (u *Updater) Name() string {
 }
 
 func (u *Updater) Fetch(ctx context.Context, fingerprint driver.Fingerprint) (io.ReadCloser, driver.Fingerprint, error) {
-	client, err := NewClient(ctx, u.release)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create client: %v", err)
+	// This two-step preserves the old client-per-call behavior if Configure
+	// hasn't been called.
+	client := u.client
+	if client == nil {
+		var err error
+		client, err = NewClient(ctx, u.release)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create client: %v", err)
+		}
 	}
 
-	tctx, cancel := context.WithTimeout(ctx, defaultOpTimeout)
+	tctx, cancel := context.WithTimeout(ctx, u.Timeout)
 	defer cancel()
 	repoMD, err := client.RepoMD(tctx)
 	if err != nil {
@@ -50,7 +70,7 @@ func (u *Updater) Fetch(ctx context.Context, fingerprint driver.Fingerprint) (io
 		return nil, "", fmt.Errorf("updates repo metadata could not be retrieved: %v", err)
 	}
 
-	tctx, cancel = context.WithTimeout(ctx, defaultOpTimeout)
+	tctx, cancel = context.WithTimeout(ctx, u.Timeout)
 	defer cancel()
 	rc, err := client.Updates(tctx)
 	if err != nil {
@@ -88,6 +108,31 @@ func (u *Updater) Parse(ctx context.Context, contents io.ReadCloser) ([]*clairco
 	}
 
 	return vulns, nil
+}
+
+// Configure implements driver.Configurable.
+func (u *Updater) Configure(ctx context.Context, f driver.ConfigUnmarshaler, c *http.Client) error {
+	if err := f(u); err != nil {
+		return err
+	}
+	u.client = &Client{c: c}
+
+	for _, m := range u.Mirrors {
+		mu, err := url.Parse(m)
+		if err != nil {
+			return fmt.Errorf("failed to create client: %w", err)
+		}
+		u.client.mirrors = append(u.client.mirrors, mu)
+	}
+	if len(u.client.mirrors) == 0 {
+		ctx, cancel := context.WithTimeout(ctx, u.Timeout)
+		defer cancel()
+		if err := u.client.getMirrors(ctx, u.release); err != nil {
+			return fmt.Errorf("failed to create client: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // unpack takes the partially populated vulnerability and creates a fully populated vulnerability for each
