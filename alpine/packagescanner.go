@@ -18,14 +18,20 @@ const (
 )
 
 var (
-	_ indexer.VersionedScanner = (*Scanner)(nil)
-	_ indexer.PackageScanner   = (*Scanner)(nil)
+	_ indexer.VersionedScanner    = (*Scanner)(nil)
+	_ indexer.PackageScanner      = (*Scanner)(nil)
+	_ indexer.ConfigurableScanner = (*Scanner)(nil)
 )
 
 // Scanner scans for packages in an apk database.
 //
 // The zero value is ready to use.
-type Scanner struct{}
+type Scanner struct {
+	// DB sets the path of the apk database to search for.
+	//
+	// The default is "lib/apk/db/installed".
+	DB string `yaml:"db",json:"db"`
+}
 
 // Name implements indexer.VersionedScanner.
 func (*Scanner) Name() string { return pkgName }
@@ -42,9 +48,13 @@ const installedFile = "lib/apk/db/installed"
 // the packages listed there.
 //
 // A return of (nil, nil) is expected if there's no apk database.
-func (*Scanner) Scan(ctx context.Context, layer *claircore.Layer) ([]*claircore.Package, error) {
+func (s *Scanner) Scan(ctx context.Context, layer *claircore.Layer) ([]*claircore.Package, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	fn := installedFile
+	if s.DB != "" {
+		fn = s.DB
 	}
 	defer trace.StartRegion(ctx, "Scanner.Scan").End()
 	trace.Log(ctx, "layer", layer.Hash.String())
@@ -57,7 +67,7 @@ func (*Scanner) Scan(ctx context.Context, layer *claircore.Layer) ([]*claircore.
 	log.Debug().Msg("start")
 	defer log.Debug().Msg("done")
 
-	fs, err := layer.Files(installedFile)
+	fs, err := layer.Files(fn)
 	switch err {
 	case nil:
 	case claircore.ErrNotFound:
@@ -65,7 +75,7 @@ func (*Scanner) Scan(ctx context.Context, layer *claircore.Layer) ([]*claircore.
 	default:
 		return nil, err
 	}
-	b, ok := fs[installedFile]
+	b, ok := fs[fn]
 	if !ok {
 		return nil, nil
 	}
@@ -119,4 +129,9 @@ func (*Scanner) Scan(ctx context.Context, layer *claircore.Layer) ([]*claircore.
 	log.Debug().Int("count", len(pkgs)).Msg("found packages")
 
 	return pkgs, nil
+}
+
+// Configure implements indexer.ConfigurableScanner.
+func (s *Scanner) Configure(_ context.Context, f indexer.ConfigDeserializer) error {
+	return f(s)
 }
