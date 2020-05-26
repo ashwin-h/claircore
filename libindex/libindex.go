@@ -27,7 +27,7 @@ type Libindex struct {
 	db *sqlx.DB
 	// a Store which will be shared between scanner instances
 	store indexer.Store
-	// a sharable http client
+	// a shareable http client
 	client *http.Client
 	state  string
 }
@@ -38,7 +38,7 @@ func New(ctx context.Context, opts *Opts) (*Libindex, error) {
 		Str("component", "libindex/New").
 		Logger()
 	ctx = log.WithContext(ctx)
-	err := opts.Parse()
+	err := opts.Parse(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse opts: %v", err)
 	}
@@ -57,7 +57,10 @@ func New(ctx context.Context, opts *Opts) (*Libindex, error) {
 	}
 
 	// register any new scanners.
-	pscnrs, dscnrs, rscnrs, err := indexer.EcosystemsToScanners(ctx, opts.Ecosystems)
+	pscnrs, dscnrs, rscnrs, err := indexer.EcosystemsToScanners(ctx, opts.Ecosystems, opts.Airgap)
+	if err != nil {
+		return nil, err
+	}
 	vscnrs := indexer.MergeVS(pscnrs, dscnrs, rscnrs)
 
 	h := md5.New()
@@ -67,6 +70,39 @@ func New(ctx context.Context, opts *Opts) (*Libindex, error) {
 		n := s.Name()
 		m[n] = []byte(n + s.Version() + s.Kind() + "\n")
 		ns = append(ns, n)
+
+		var cfgMap map[string]func(interface{}) error
+		switch s.Kind() {
+		case "package":
+			cfgMap = opts.ScannerConfig.Package
+		case "repository":
+			cfgMap = opts.ScannerConfig.Repo
+		case "distribution":
+			cfgMap = opts.ScannerConfig.Dist
+		default:
+			continue
+		}
+		if f, ok := cfgMap[n]; ok {
+			cs, csOK := s.(indexer.ConfigurableScanner)
+			rs, rsOK := s.(indexer.RPCScanner)
+			switch {
+			case !csOK && !rsOK:
+				log.Warn().
+					Str("scanner", n).
+					Msg("configuration present for an unconfigurable scanner, skipping")
+				continue
+			case csOK && rsOK:
+				fallthrough
+			case !csOK && rsOK:
+				if err := rs.Configure(ctx, f, l.client); err != nil {
+					return nil, err
+				}
+			case csOK && !rsOK:
+				if err := cs.Configure(ctx, f); err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	if _, err := io.WriteString(h, versionMagic); err != nil {
 		return nil, err

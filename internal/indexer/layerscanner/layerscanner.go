@@ -7,14 +7,15 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rs/zerolog"
+
 	"github.com/quay/claircore"
 	"github.com/quay/claircore/internal/indexer"
-	"github.com/rs/zerolog"
 )
 
 // layerScanner implements the indexer.LayerScanner interface.
 type layerScanner struct {
-	// common depedencies
+	// common dependencies
 	*indexer.Opts
 	// concurrency level. maximum number of concurrent layer scans
 	cLevel int
@@ -69,7 +70,7 @@ func (ls *layerScanner) Scan(ctx context.Context, manifest claircore.Digest, lay
 
 	ls.cc = make(chan struct{}, ccMin)
 
-	ps, ds, rs, err := indexer.EcosystemsToScanners(ctx, ls.Opts.Ecosystems)
+	ps, ds, rs, err := indexer.EcosystemsToScanners(ctx, ls.Opts.Ecosystems, ls.Opts.Airgap)
 	if err != nil {
 		fmt.Errorf("failed to extract scanners from ecosystems: %v", err)
 	}

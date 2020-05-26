@@ -10,4 +10,5 @@ type Opts struct {
 	Fetcher      Fetcher
 	Ecosystems   []*Ecosystem
 	Vscnrs       VersionedScanners
+	Airgap       bool
 }
